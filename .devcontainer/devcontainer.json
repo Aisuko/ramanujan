@@ -1,0 +1,95 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/debian
+//
+// Ramanujan is the model + format + extension side of the stack; forge is the runtime
+// and the trainer. This container now mirrors forge's GPU wiring (--gpus all, the
+// 226/195 device-cgroup rules, /dev/dri, NVIDIA_DRIVER_CAPABILITIES=...,graphics,
+// scripts/devcontainer/setup_nvidia_vulkan.sh on create and on every start) so training
+// can run against the real A5000 from here too — see .claude/commands/7_aug.md's
+// 2026-08-07 updates for how this was diagnosed. Requires an NVIDIA host; it will not
+// build elsewhere.
+//
+// This also covers the *WebGPU* half of forge's setup: the artifact we ship is a .fzm
+// checkpoint executed by wgpu/WebGPU in a browser (references/PLAN.md §4–§5). With the
+// NVIDIA ICD present, wgpu enumerates it alongside Mesa's lavapipe (software, still
+// installed by .devcontainer/setup-system.sh) and prefers the real GPU.
+{
+	"name": "Ramanujan",
+	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+	"image": "mcr.microsoft.com/devcontainers/base:trixie",
+	"features": {
+		"ghcr.io/devcontainers/features/python:1": {
+			"installTools": true,
+			"version": "latest"
+		},
+		"ghcr.io/devcontainers/features/rust:1": {
+			"version": "latest",
+			"profile": "minimal",
+			// forge cross-compiles to aarch64; we don't. The target that matters here is
+			// wasm32, for crates/ramanujan-wasm and the extension's offscreen-document runtime.
+			"targets": "wasm32-unknown-unknown",
+			"components": "rust-analyzer,rust-src,rustfmt,clippy"
+		},
+		// MV3 extension tooling (bundler, web-ext, wasm-pack's npm output).
+		"ghcr.io/devcontainers/features/node:1": {
+			"version": "lts"
+		}
+	},
+	"runArgs": [
+		"--gpus", "all",
+		// 195 = nvidia char devices (nvidia0, nvidiactl, nvidia-uvm),
+		// 226 = DRM. Match forge's rules so /dev/nvidia* and /dev/dri are usable.
+		"--device-cgroup-rule=c 195:* rmw",
+		"--device-cgroup-rule=c 226:* rmw",
+		"--device=/dev/dri"
+	],
+	// Order matters: OS update, Vulkan (incl. the NVIDIA ICD wiring), tmux — all in
+	// setup-system.sh — then the applications last.
+	"postCreateCommand": "bash .devcontainer/setup-system.sh && bash .devcontainer/setup-apps.sh",
+	// /dev/dri is re-mounted with the host's restrictive perms on every container
+	// start, not just creation, so the fix has to re-run every start too.
+	"postStartCommand": "bash scripts/devcontainer/setup_nvidia_vulkan.sh || true",
+	"containerEnv": {
+		"TZ": "Australia/Melbourne",
+
+		"NVIDIA_VISIBLE_DEVICES": "all",
+		// "graphics" is required for the NVIDIA Vulkan ICD, which wgpu needs on Linux.
+		"NVIDIA_DRIVER_CAPABILITIES": "compute,utility,graphics",
+		"WGPU_BACKEND": "vulkan",
+		"RUST_BACKTRACE": "1",
+		// Consumed by wasm-bindgen-test / wasm-pack test --chrome --headless.
+		"CHROME_BIN": "/usr/bin/chromium",
+		"CHROMEDRIVER": "/usr/bin/chromedriver",
+		// Read by Debian's /usr/bin/chromium wrapper. --no-sandbox because the container
+		// has no user namespaces; the WebGPU flags are what make lavapipe an acceptable
+		// adapter to Dawn. --headless is left to whoever launches the browser.
+		"CHROMIUM_FLAGS": "--no-sandbox --enable-unsafe-webgpu --enable-features=Vulkan"
+	},
+	"forwardPorts": [
+		5173,
+		8080
+	],
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"rust-lang.rust-analyzer",
+				"tamasfe.even-better-toml",
+				"vadimcn.vscode-lldb",
+				"ms-python.python",
+				"ms-python.vscode-pylance",
+				"charliermarsh.ruff"
+			],
+			"settings": {
+				"rust-analyzer.check.command": "clippy",
+				"rust-analyzer.cargo.targetDir": true,
+				"[rust]": {
+					"editor.formatOnSave": true
+				}
+			}
+		}
+	},
+	"shutdownAction": "stopContainer"
+
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	// "remoteUser": "root"
+}
