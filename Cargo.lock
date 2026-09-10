@@ -255,8 +255,7 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
 name = "forge-ml"
-version = "0.5.0"
-source = "git+https://github.com/Aisuko/forge?rev=3f83a44652aed7bda7850b98d2d37062852a69d9#3f83a44652aed7bda7850b98d2d37062852a69d9"
+version = "0.6.0"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",
@@ -751,10 +750,11 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "ramanujan"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "forge-ml",
- "rand",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,8 +1,11 @@
 [package]
 name = "ramanujan"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 
+[workspace]
+
 [dependencies]
-forge-ml = { git = "https://github.com/Aisuko/forge", rev = "3f83a44652aed7bda7850b98d2d37062852a69d9", features = ["train"] }
-rand = "0.9"
+forge-ml = { path = "../.." }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

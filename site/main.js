@@ -1,301 +1,160 @@
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+const TOOLS = [
+  { id: 'search-001', name: 'Web search agent', s: [
+    { t: 'There are many open-weight language models available today, and the right choice depends on your needs.' },
+    { t: 'Gemma 2 9B runs on a single 24 GB consumer GPU, and its licence allows commercial self-hosting.', m: 'gemma', f: ['selfhost', 'single-gpu'], c: 'runs on a single 24 GB GPU under a licence that allows commercial self-hosting' },
+    { t: 'Qwen2.5 7B covers 29 languages, including Chinese, Arabic and Vietnamese.', m: 'qwen', f: ['multilingual'], c: 'covers 29 languages' },
+    { t: 'Llama 3.1 70B leads several English chat benchmarks but needs multiple datacenter GPUs.', m: 'llama', f: ['english', 'datacenter'], c: 'leads English chat benchmarks on datacenter GPUs' },
+    { t: 'Gemma 2 9B was trained mostly on English text, so English is its strongest language.', m: 'gemma', f: ['english'], c: 'is strongest in English' },
+    { t: 'It is always a good idea to evaluate models on your own data before deploying them.' },
+  ] },
+  { id: 'rag-002', name: 'Docs retrieval tool', s: [
+    { t: 'According to the Qwen2.5 documentation, the 7B model supports more than 29 languages.', m: 'qwen', f: ['multilingual'], dup: 'search-001:2' },
+    { t: 'Qwen2.5 7B fits in 16 GB of GPU memory with 4-bit weights and can be self-hosted.', m: 'qwen', f: ['selfhost', 'single-gpu'], c: 'fits in 16 GB of GPU memory with 4-bit weights' },
+    { t: 'Hosted APIs such as Gemini Flash need no infrastructure and are billed per token.', m: 'gemini', f: ['api'], c: 'needs no infrastructure and is billed per token' },
+    { t: 'Gemini Flash handles more than 100 languages through the managed API.', m: 'gemini', f: ['api', 'multilingual'], c: 'handles more than 100 languages' },
+  ] },
+  { id: 'code-003', name: 'Coding assistant', s: [
+    { t: 'Here is a general overview of how to deploy a chatbot.' },
+    { t: 'vLLM can serve Gemma 2 9B on one GPU behind an OpenAI-compatible endpoint.', m: 'gemma', f: ['selfhost', 'single-gpu'], c: 'can be served by vLLM on one GPU' },
+    { t: 'Running Llama 3.1 70B in production usually means tensor parallelism across four or more GPUs.', m: 'llama', f: ['selfhost', 'datacenter'], c: 'runs self-hosted with tensor parallelism across four or more GPUs' },
+    { t: 'A managed API removes the need to patch drivers and maintain GPU servers.', m: 'gemini', f: ['api', 'single-gpu', 'datacenter'], c: 'removes the need to maintain GPU servers' },
+    { t: 'As mentioned above, Gemma 2 9B fits on one 24 GB card.', m: 'gemma', f: ['selfhost', 'single-gpu'], dup: 'search-001:1' },
+  ] },
+];
 
-const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const MODELS = { gemma: 'Gemma 2 9B', qwen: 'Qwen2.5 7B', llama: 'Llama 3.1 70B', gemini: 'Gemini Flash' };
 
-function field() {
-  const canvas = document.getElementById('field');
-  if (!canvas) return;
-  const readout = document.getElementById('readout');
-  let renderer;
-  try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  } catch (e) {
-    canvas.style.display = 'none';
-    return;
-  }
-  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+const QAS = [
+  { id: 'q-001', q: 'Where will the model run?', w: 3, a: [['selfhost', 'Self-hosted'], ['api', 'Managed API']] },
+  { id: 'q-002', q: 'Which languages must it handle?', w: 2, a: [['english', 'English is enough'], ['multilingual', 'Many languages']] },
+  { id: 'q-003', q: 'What hardware do you have?', w: 1, a: [['single-gpu', 'One consumer GPU'], ['datacenter', 'A GPU cluster']] },
+];
 
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 200);
-  camera.position.set(0, 3.0, 14.5);
+const MISSING = { selfhost: 'self-hosting', api: 'a managed API', english: 'English quality', multilingual: 'multilingual support', 'single-gpu': 'single-GPU deployment', datacenter: 'cluster deployment' };
+const OPPOSITE = { selfhost: 'api', api: 'selfhost', 'single-gpu': 'datacenter' };
 
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.enablePan = false;
-  controls.enableZoom = false;
-  controls.minPolarAngle = 0.5;
-  controls.maxPolarAngle = 2.5;
-  controls.autoRotate = !REDUCE;
-  controls.autoRotateSpeed = 0.5;
+const SENTENCES = TOOLS.flatMap(tool => tool.s.map((s, i) => ({ ...s, key: `${tool.id}:${i}`, source: tool.id })));
+SENTENCES.forEach((s, i) => { s.index = i; });
 
-  const world = new THREE.Group();
-  scene.add(world);
+const picked = {};
+let request = 0;
 
-  const N = 110, R = 6.2;
-  const C = new THREE.Vector3(0, 0, 0);
-  const P = [];
-  for (let i = 0; i < N; i++) {
-    const y = 1 - (i / (N - 1)) * 2;
-    const r = Math.sqrt(Math.max(0, 1 - y * y));
-    const th = Math.PI * (3 - Math.sqrt(5)) * i;
-    P.push(new THREE.Vector3(Math.cos(th) * r, y * 0.66, Math.sin(th) * r).multiplyScalar(R));
-  }
+const h = (tag, attrs = {}, ...kids) => {
+  const el = document.createElement(tag);
+  Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+  el.append(...kids);
+  return el;
+};
 
-  const nodes = new THREE.InstancedMesh(
-    new THREE.OctahedronGeometry(0.12, 0),
-    new THREE.MeshBasicMaterial(),
-    N
-  );
-  const m = new THREE.Matrix4();
-  for (let i = 0; i < N; i++) {
-    m.makeTranslation(P[i].x, P[i].y, P[i].z);
-    nodes.setMatrixAt(i, m);
-    nodes.setColorAt(i, new THREE.Color(0x37e6c0));
-  }
-  nodes.instanceMatrix.needsUpdate = true;
-  world.add(nodes);
+const join = xs => xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
 
-  const spoke = new Float32Array(N * 6);
-  for (let i = 0; i < N; i++) {
-    spoke.set([0, 0, 0, P[i].x, P[i].y, P[i].z], i * 6);
-  }
-  const spokes = new THREE.LineSegments(
-    new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(spoke, 3)),
-    new THREE.LineBasicMaterial({ color: 0x1b2a37, transparent: true, opacity: 0.4 })
-  );
-  world.add(spokes);
-
-  world.add(new THREE.LineSegments(
-    new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.15, 1)),
-    new THREE.LineBasicMaterial({ color: 0x37e6c0, transparent: true, opacity: 0.32 })
-  ));
-  const core = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(0.5, 1),
-    new THREE.MeshBasicMaterial({ color: 0x37e6c0 })
-  );
-  world.add(core);
-  world.add(new THREE.Mesh(
-    new THREE.TorusGeometry(R * 1.02, 0.006, 3, 160),
-    new THREE.MeshBasicMaterial({ color: 0x37e6c0, transparent: true, opacity: 0.16 })
-  ).rotateX(Math.PI / 2));
-
-  const PARK = 1e4;
-  function pulseLayer(color, size, opacity) {
-    const a = new Float32Array(N * 3).fill(PARK);
-    const g = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(a, 3));
-    const pts = new THREE.Points(g, new THREE.PointsMaterial({ color, size, transparent: true, opacity, depthWrite: false }));
-    pts.frustumCulled = false;
-    world.add(pts);
-    return { a, g, pts };
-  }
-  const up = pulseLayer(0x9fb3c8, 0.1, 0.85);
-  const down = pulseLayer(0x37e6c0, 0.17, 1);
-
-  const drift = new Float32Array(N);
-  const rate = new Float32Array(N);
-  const flash = new Float32Array(N);
-  const uT = new Float32Array(N).fill(-1);
-  const dT = new Float32Array(N).fill(-1);
-  for (let i = 0; i < N; i++) {
-    drift[i] = Math.random() * 0.3;
-    rate[i] = 0.03 + Math.random() * 0.11;
-  }
-
-  const cOk = new THREE.Color(0x37e6c0);
-  const cBad = new THREE.Color(0xf2a33c);
-  const cHot = new THREE.Color(0xffffff);
-  const tmp = new THREE.Color();
-  const v = new THREE.Vector3();
-
-  function setPoint(layer, i, x, y, z) {
-    layer.a[i * 3] = x; layer.a[i * 3 + 1] = y; layer.a[i * 3 + 2] = z;
-  }
-
-  let running = true, last = performance.now(), acc = 0;
-
-  function tick(now) {
-    requestAnimationFrame(tick);
-    const dt = Math.min((now - last) / 1000, 0.05);
-    last = now;
-    if (!running) return;
-
-    let drifted = 0;
-    for (let i = 0; i < N; i++) {
-      drift[i] = Math.min(1, drift[i] + rate[i] * dt);
-      if (drift[i] > 0.28) drifted++;
-
-      if (drift[i] > 0.3 && uT[i] < 0 && dT[i] < 0 && Math.random() < 0.6 * dt) uT[i] = 0;
-
-      if (uT[i] >= 0) {
-        uT[i] += dt * 0.95;
-        if (uT[i] >= 1) { uT[i] = -1; dT[i] = 0; setPoint(up, i, PARK, PARK, PARK); }
-        else { v.copy(P[i]).lerp(C, uT[i]); setPoint(up, i, v.x, v.y, v.z); }
-      }
-      if (dT[i] >= 0) {
-        dT[i] += dt * 1.6;
-        if (dT[i] >= 1) { dT[i] = -1; drift[i] = 0; flash[i] = 1; setPoint(down, i, PARK, PARK, PARK); }
-        else { v.copy(C).lerp(P[i], dT[i]); setPoint(down, i, v.x, v.y, v.z); }
-      }
-
-      flash[i] = Math.max(0, flash[i] - dt * 2.2);
-      tmp.copy(cOk).lerp(cBad, drift[i]);
-      if (flash[i] > 0) tmp.lerp(cHot, flash[i]);
-      nodes.setColorAt(i, tmp);
-    }
-    nodes.instanceColor.needsUpdate = true;
-    up.g.attributes.position.needsUpdate = true;
-    down.g.attributes.position.needsUpdate = true;
-
-    core.scale.setScalar(1 + Math.sin(now / 420) * 0.08);
-    controls.update();
-    renderer.render(scene, camera);
-
-    acc += dt;
-    if (acc > 0.25 && readout) {
-      acc = 0;
-      readout.innerHTML = `<span class="text-accent">●</span> RECONCILING · ${String(drifted).padStart(3, '0')} DRIFTED / ${N} EDGES`;
-    }
-  }
-
-  function resize() {
-    const w = canvas.clientWidth, h = canvas.clientHeight;
-    if (!w || !h) return;
-    renderer.setSize(w, h, false);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    world.position.x = w > 1024 ? 4.2 : w > 720 ? 2.2 : 0;
-    world.position.y = w > 720 ? 0 : -1.2;
-  }
-  addEventListener('resize', resize);
-  resize();
-  requestAnimationFrame(tick);
-
-  const hero = document.getElementById('top');
-  if (hero) {
-    new IntersectionObserver((es) => { running = es[0].isIntersecting; last = performance.now(); }).observe(hero);
-  }
+function select(facets) {
+  if (!facets.length) return { model: null, evidence: [], missing: [] };
+  const weight = Object.fromEntries(QAS.flatMap(q => q.a.map(([f]) => [f, q.w])));
+  const conflicts = s => facets.some(f => OPPOSITE[f] && s.f.includes(OPPOSITE[f]) && !s.f.includes(f));
+  const ranked = Object.keys(MODELS).map(m => {
+    const own = SENTENCES.filter(s => s.m === m && !s.dup);
+    const covered = facets.filter(f => own.some(s => s.f.includes(f) && !conflicts(s)));
+    return {
+      m, own, covered,
+      cover: covered.reduce((a, f) => a + weight[f], 0),
+      bad: own.filter(conflicts).length,
+      hits: own.reduce((a, s) => a + s.f.filter(f => facets.includes(f)).length, 0),
+    };
+  }).sort((a, b) => b.cover - a.cover || a.bad - b.bad || b.hits - a.hits);
+  const best = ranked[0];
+  const evidence = best.own
+    .filter(s => !conflicts(s))
+    .map(s => ({ s, score: s.f.filter(f => facets.includes(f)).length / facets.length }))
+    .filter(e => e.score > 0)
+    .sort((a, b) => b.score - a.score || a.s.index - b.s.index)
+    .slice(0, 3);
+  return { model: best.m, evidence, missing: facets.filter(f => !best.covered.includes(f)) };
 }
 
-function reveal() {
-  const io = new IntersectionObserver((es) => {
-    for (const e of es) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-  }, { rootMargin: '-10% 0px -10% 0px' });
-  document.querySelectorAll('.rise').forEach((n) => io.observe(n));
+function summarise({ model, evidence, missing }) {
+  if (!model) return [`The three tools compare ${join(Object.values(MODELS))}, but which one fits depends on how you deploy, which languages you need and what hardware you have.`];
+  const claims = evidence.map((e, i) => `${e.s.c}<sup>[${i + 1}]</sup>`);
+  const out = [`${MODELS[model]} best fits your answers: it ${join(claims)}.`];
+  if (missing.length) out.push(`None of the tool outputs confirm ${join(missing.map(f => MISSING[f]))} for it.`);
+  return out;
 }
 
-function ladder() {
-  const box = document.getElementById('ladder');
-  if (!box) return;
-  new IntersectionObserver((es, o) => {
-    if (!es[0].isIntersecting) return;
-    o.disconnect();
-    box.querySelectorAll('.bar').forEach((b, i) => {
-      setTimeout(() => { b.style.width = b.dataset.w + '%'; }, 90 * i);
-    });
-  }, { threshold: 0.25 }).observe(box);
-}
+const truncate = t => t.length > 60 ? `${t.slice(0, 57)}…` : t;
+const words = t => t.split(/\s+/).filter(Boolean).length;
 
-function rail() {
-  const links = [...document.querySelectorAll('.rail a')];
-  const io = new IntersectionObserver((es) => {
-    for (const e of es) {
-      if (!e.isIntersecting) continue;
-      links.forEach((l) => l.setAttribute('aria-current', l.hash === '#' + e.target.id));
-    }
-  }, { threshold: 0.4 });
-  links.forEach((l) => { const s = document.querySelector(l.hash); if (s) io.observe(s); });
-}
+function render() {
+  const facets = QAS.map(q => picked[q.id]).filter(Boolean);
+  const result = select(facets);
+  const sentences = summarise(result);
+  const chosen = new Map(result.evidence.map((e, i) => [e.s.key, i + 1]));
+  request += 1;
 
-function bubbleDemo() {
-  const art = document.getElementById('reactive');
-  const bub = document.getElementById('bubble');
-  if (!art || !bub) return;
-  const bHead = document.getElementById('b-head');
-  const bText = document.getElementById('b-text');
-  const bMs = document.getElementById('b-ms');
-  const bConf = document.getElementById('b-conf');
-
-  const STOP = new Set(['the', 'and', 'to', 'of', 'a', 'it', 'is', 'then', 'so', 'that', 'not', 'on', 'in']);
-  const HITS = [
-    ['mmr', 'maximal marginal relevance — ranks candidates by relevance minus redundancy against what you already have.', 92],
-    ['redundanc', 'overlap with candidates already chosen. MMR subtracts it so the bubble does not repeat itself.', 81],
-    ['pointer head', 'scores every other span on the page against your selection and returns the best one, verbatim.', 90],
-    ['webgpu', "the browser's GPU API. forge compiles the encoder to WGSL and runs it there — no install, no endpoint.", 88],
-    ['reconcile', 'the edge reports observed status upward; the centre returns the delta to the expected state. Continuous, never blocking.', 85],
-    ['expected state', 'what the centralised network believes each edge should be running. The edge converges toward it.', 83],
-    ['threshold', 'below it, the bubble says the page never explains this — instead of pointing somewhere wrong.', 79],
-    ['dequantis', 'q4 codes unpack to f32 while loading into GPU buffers, so the size win costs no new kernels.', 76],
-    ['weights', '5.94M parameters, 0.92 MB at the target quantisation. Bundled with the app, never fetched.', 80],
-    ['warm', 'pipeline creation is the one-time cost. The tab keeps the device and buffers alive between reactions.', 74],
-  ];
-
-  function react(raw) {
-    const t = raw.toLowerCase().trim();
-    if (t.length < 3 || STOP.has(t)) {
-      return { head: 'HEAD A · NULL CLASS', text: 'This page never explains that. Nothing to point at, so nothing is invented.', conf: 11, warn: true };
-    }
-    for (const [k, text, conf] of HITS) if (t.includes(k)) return { head: 'HEAD A · POINTER', text, conf };
-    return { head: 'HEAD A · POINTER', text: 'Closest explaining span on this page: “trade relevance against redundancy”.', conf: 43 };
-  }
-
-  function show() {
-    const sel = getSelection();
-    if (!sel || sel.isCollapsed || !sel.rangeCount) return hide();
-    const r = sel.getRangeAt(0);
-    if (!art.contains(r.commonAncestorContainer)) return hide();
-    const txt = sel.toString();
-    if (!txt.trim()) return hide();
-
-    const out = react(txt);
-    bHead.textContent = out.head;
-    bHead.className = 'mono text-[9px] tracking-[.18em] ' + (out.warn ? 'text-warn' : 'text-accent');
-    bText.textContent = out.text;
-    bMs.textContent = (6.8 + Math.random() * 4.6).toFixed(1) + ' ms';
-    bConf.className = 'bar ' + (out.warn ? 'bg-warn' : 'bg-accent');
-
-    const box = r.getBoundingClientRect();
-    bub.classList.remove('hidden');
-    const w = bub.offsetWidth, h = bub.offsetHeight;
-    let x = box.left + box.width / 2 - w / 2;
-    x = Math.max(12, Math.min(x, innerWidth - w - 12));
-    const above = box.top > h + 16;
-    bub.style.left = x + 'px';
-    bub.style.top = (above ? box.top - h - 10 : box.bottom + 10) + 'px';
-    bConf.style.width = '0%';
-    requestAnimationFrame(() => { bConf.style.width = out.conf + '%'; });
-  }
-
-  function hide() { bub.classList.add('hidden'); }
-
-  let t = 0;
-  document.addEventListener('selectionchange', () => {
-    clearTimeout(t);
-    t = setTimeout(show, 140);
+  document.querySelectorAll('.s').forEach(el => {
+    const s = SENTENCES[+el.dataset.i];
+    const rank = chosen.get(s.key);
+    const score = s.f ? s.f.filter(f => facets.includes(f)).length / Math.max(facets.length, 1) : 0;
+    el.classList.toggle('ev', !!rank);
+    el.classList.toggle('dup', !!s.dup && facets.length > 0 && s.f.some(f => facets.includes(f)));
+    el.classList.toggle('gen', !s.f);
+    if (rank) el.dataset.ref = `[${rank}]`;
+    el.querySelector('.bar').style.width = `${Math.round(score * 100)}%`;
   });
-  bub.addEventListener('mousedown', (e) => e.preventDefault());
-  addEventListener('scroll', hide, { passive: true });
-  addEventListener('keydown', (e) => { if (e.key === 'Escape') { hide(); getSelection().removeAllRanges(); } });
 
-  new IntersectionObserver((es, o) => {
-    if (!es[0].isIntersecting || REDUCE) return;
-    o.disconnect();
-    const seed = [...art.querySelectorAll('b')].find((b) => b.textContent.trim() === 'MMR');
-    if (!seed) return;
-    setTimeout(() => {
-      const r = document.createRange();
-      r.selectNodeContents(seed);
-      const sel = getSelection();
-      sel.removeAllRanges();
-      sel.addRange(r);
-      show();
-    }, 700);
-  }, { threshold: 0.55 }).observe(art);
+  document.getElementById('summary').innerHTML = sentences.join(' ');
+  const evidence = document.getElementById('evidence');
+  evidence.replaceChildren(...result.evidence.map(e => h('li', {}, h('code', {}, `${e.s.source}`), ` ${e.s.t}`)));
+
+  const refining = request > 1;
+  document.getElementById('stats').replaceChildren(
+    h('span', {}, `req-${String(request).padStart(3, '0')}`),
+    h('span', { class: refining ? 'on' : '' }, refining ? `refinement ${request - 1}` : 'first request'),
+    h('span', { class: 'on' }, 'tools rerun: 0'),
+    h('span', { class: refining ? 'on' : '' }, refining ? 'source encoding: cached' : 'source encoding: computed'),
+    h('span', {}, `evidence: ${result.evidence.length}`),
+    h('span', {}, `sentences: ${sentences.length}`),
+  );
+
+  const id = n => `req-${String(n).padStart(3, '0')}`;
+  const req = {
+    request_id: id(request),
+    task: 'focused_summarisation',
+    tool_outputs: TOOLS.map(t => ({ source_id: t.id, content: truncate(t.s.map(s => s.t).join(' ')) })),
+    selected_qa: QAS.filter(q => picked[q.id]).map(q => ({ question_id: q.id, question: q.q, answer: q.a.find(([f]) => f === picked[q.id])[1] })),
+    constraints: { min_sentences: 1, max_sentences: 3, style: 'concise', preserve_factuality: true },
+    previous_request_id: refining ? id(request - 1) : null,
+  };
+  const plain = sentences.join(' ').replace(/<sup>\[\d+\]<\/sup>/g, '');
+  const res = {
+    request_id: id(request),
+    summary: plain,
+    sentence_count: sentences.length,
+    evidence: result.evidence.map(e => ({ source_id: e.s.source, text_span: e.s.t, sentence_index: e.s.index, score: +e.score.toFixed(2) })),
+    metrics: { selected_evidence: result.evidence.length, input_tokens: Math.round(words(SENTENCES.map(s => s.t).join(' ')) * 1.3), output_tokens: Math.round(words(plain) * 1.3) },
+  };
+  document.getElementById('req').textContent = JSON.stringify(req, null, 2);
+  document.getElementById('res').textContent = JSON.stringify(res, null, 2);
 }
 
-field();
-reveal();
-ladder();
-rail();
-bubbleDemo();
+document.getElementById('toolmeta').textContent =
+  `Agent called ${TOOLS.length} tools → ${SENTENCES.length} sentences, ${words(SENTENCES.map(s => s.t).join(' '))} words`;
+
+document.getElementById('tools').replaceChildren(...TOOLS.map(tool => h('div', { class: 'tool' },
+  h('h3', {}, tool.id, h('span', {}, tool.name)),
+  ...tool.s.map((s, i) => h('span', { class: 's', 'data-i': SENTENCES.find(x => x.key === `${tool.id}:${i}`).index }, s.t, h('span', { class: 'bar' }))),
+)));
+
+document.getElementById('qas').replaceChildren(...QAS.map(q => h('div', { class: 'qa' },
+  h('p', {}, q.q),
+  h('div', { class: 'chips' }, ...q.a.map(([f, label]) => {
+    const b = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false' }, label);
+    b.addEventListener('click', () => {
+      picked[q.id] = picked[q.id] === f ? undefined : f;
+      b.parentElement.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c === b && picked[q.id] === f)));
+      render();
+    });
+    return b;
+  })),
+)));
+
+render();

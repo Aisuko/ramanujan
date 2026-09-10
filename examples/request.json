@@ -1,0 +1,12 @@
+{
+  "request_id": "req-001",
+  "task": "focused_summarisation",
+  "tool_outputs": [
+    { "source_id": "tool-001", "content": "Qwen supports multilingual tasks. It is available under an open licence." },
+    { "source_id": "tool-002", "content": "Gemma supports local deployment. Gemma can be self-hosted on a single GPU." }
+  ],
+  "selected_qa": [
+    { "question_id": "q-001", "question": "What deployment do you prefer?", "answer": "Self-hosted" }
+  ],
+  "constraints": { "min_sentences": 1, "max_sentences": 3, "style": "concise", "preserve_factuality": true }
+}
